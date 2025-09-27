@@ -7,11 +7,11 @@ import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.WaitForSelectorState;
-import getjobs.enums.RecruitmentPlatformEnum;
+import getjobs.common.enums.RecruitmentPlatformEnum;
 import getjobs.modules.boss.BossElementLocators;
-import getjobs.modules.boss.dto.BossConfigDTO;
+import getjobs.common.dto.ConfigDTO;
 import getjobs.modules.boss.dto.JobDTO;
-import getjobs.modules.boss.enums.JobStatusEnum;
+import getjobs.common.enums.JobStatusEnum;
 import getjobs.modules.boss.service.JobFilterService;
 import getjobs.modules.boss.service.playwright.BossApiMonitorService;
 import getjobs.repository.JobRepository;
@@ -29,9 +29,9 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -39,10 +39,10 @@ import static getjobs.modules.boss.BossElementLocators.*;
 
 /**
  * Boss直聘招聘服务实现类
- * 
+ *
  * @author loks666
- *         项目链接: <a href=
- *         "https://github.com/loks666/get_jobs">https://github.com/loks666/get_jobs</a>
+ * 项目链接: <a href=
+ * "https://github.com/loks666/get_jobs">https://github.com/loks666/get_jobs</a>
  */
 @Slf4j
 @Service
@@ -71,7 +71,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     }
 
     @Override
-    public boolean login(BossConfigDTO config) {
+    public boolean login(ConfigDTO config) {
         log.info("开始Boss直聘登录检查");
 
         try {
@@ -102,20 +102,37 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     }
 
     @Override
-    public List<JobDTO> collectJobs(BossConfigDTO config) {
+    public List<JobDTO> collectJobs(ConfigDTO config) {
         log.info("开始Boss直聘岗位采集");
         List<JobDTO> allJobDTOS = new ArrayList<>();
+
+        // 记录采集开始时间，用于统计新增岗位数量
+        LocalDateTime collectionStartTime = LocalDateTime.now();
 
         try {
             // 按城市和关键词搜索岗位
             for (String cityCode : config.getCityCodeCodes()) {
                 for (String keyword : config.getKeywordsList()) {
-                    List<JobDTO> cityJobDTOS = collectJobsByCity(cityCode, keyword, config);
-                    allJobDTOS.addAll(cityJobDTOS);
+                    collectJobsByCity(cityCode, keyword, config);
+                    // 不再依赖返回的空集合，岗位数据由监控服务自动入库
                 }
             }
 
-            log.info("Boss直聘岗位采集完成，共采集{}个岗位", allJobDTOS.size());
+            // 等待一段时间确保所有API响应都被处理完毕
+            try {
+                Thread.sleep(3000); // 等待3秒
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            // 统计采集期间新增的岗位数量
+            LocalDateTime collectionEndTime = LocalDateTime.now();
+            long collectedJobCount = jobRepository.countByPlatformAndCreatedAtBetween(
+                    "boss", collectionStartTime, collectionEndTime);
+
+            log.info("Boss直聘岗位采集完成，共采集{}个岗位", collectedJobCount);
+
+            // 返回空集合，实际岗位数据已通过监控服务入库
             return allJobDTOS;
         } catch (Exception e) {
             log.error("Boss直聘岗位采集失败", e);
@@ -124,9 +141,12 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     }
 
     @Override
-    public List<JobDTO> collectRecommendJobs(BossConfigDTO config) {
+    public List<JobDTO> collectRecommendJobs(ConfigDTO config) {
         log.info("开始Boss直聘推荐岗位采集");
         List<JobDTO> recommendJobDTOS = new ArrayList<>();
+
+        // 记录采集开始时间，用于统计新增岗位数量
+        LocalDateTime collectionStartTime = LocalDateTime.now();
 
         try {
             Page page = PlaywrightUtil.getPageObject();
@@ -160,20 +180,46 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
                     log.info("推荐岗位加载，总计: {}", totalJobs);
                 }
             }
+
+            // 等待一段时间确保所有API响应都被处理完毕
+            try {
+                Thread.sleep(3000); // 等待3秒
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            // 统计采集期间新增的岗位数量
+            LocalDateTime collectionEndTime = LocalDateTime.now();
+            long collectedJobCount = jobRepository.countByPlatformAndCreatedAtBetween(
+                    "boss", collectionStartTime, collectionEndTime);
+
+            log.info("Boss直聘推荐岗位采集完成，共采集{}个岗位", collectedJobCount);
+
         } catch (Exception e) {
             log.error("Boss直聘推荐岗位采集失败", e);
         }
 
+        // 返回空集合，实际岗位数据已通过监控服务入库
         return recommendJobDTOS;
     }
 
     @Override
-    public List<JobDTO> filterJobs(List<JobDTO> jobDTOS, BossConfigDTO config) {
-        return jobFilterService.filterJobs(jobDTOS, config);
+    public List<JobDTO> filterJobs(List<JobDTO> jobDTOS, ConfigDTO config) {
+        // 从数据库获取boss平台的配置，不使用前端传递的config
+        ConfigEntity configEntity = configService.loadByPlatformType(RecruitmentPlatformEnum.BOSS_ZHIPIN.getPlatformCode());
+        if (configEntity == null) {
+            log.warn("数据库中未找到boss平台配置，跳过过滤");
+            return jobDTOS;
+        }
+
+        // 将ConfigEntity转换为ConfigDTO
+        ConfigDTO dbConfig = convertConfigEntityToDTO(configEntity);
+
+        return jobFilterService.filterJobs(jobDTOS, dbConfig);
     }
 
     @Override
-    public int deliverJobs(List<JobDTO> jobDTOS, BossConfigDTO config) {
+    public int deliverJobs(List<JobDTO> jobDTOS, ConfigDTO config) {
         log.info("开始Boss直聘岗位投递，待投递岗位数量: {}", jobDTOS.size());
         int successCount = 0;
 
@@ -261,9 +307,80 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     // ==================== 私有辅助方法 ====================
 
     /**
+     * 将ConfigEntity转换为ConfigDTO
+     * 使用反射创建ConfigDTO实例，因为构造函数是私有的
+     */
+    private ConfigDTO convertConfigEntityToDTO(ConfigEntity entity) {
+        try {
+            // 通过反射创建ConfigDTO实例
+            java.lang.reflect.Constructor<ConfigDTO> constructor = ConfigDTO.class.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            ConfigDTO dto = constructor.newInstance();
+
+            // 基础字段映射
+            dto.setSayHi(entity.getSayHi());
+            dto.setEnableAIJobMatchDetection(entity.getEnableAIJobMatchDetection());
+            dto.setEnableAIGreeting(entity.getEnableAIGreeting());
+            dto.setFilterDeadHR(entity.getFilterDeadHR());
+            dto.setSendImgResume(entity.getSendImgResume());
+            dto.setKeyFilter(entity.getKeyFilter());
+            dto.setRecommendJobs(entity.getRecommendJobs());
+            dto.setCheckStateOwned(entity.getCheckStateOwned());
+            dto.setResumeImagePath(entity.getResumeImagePath());
+            dto.setResumeContent(entity.getResumeContent());
+            dto.setWaitTime(entity.getWaitTime());
+            dto.setPlatformType(entity.getPlatformType());
+
+            // 列表字段转换为逗号分隔的字符串
+            if (entity.getKeywords() != null) {
+                dto.setKeywords(String.join(",", entity.getKeywords()));
+            }
+            if (entity.getCityCode() != null) {
+                dto.setCityCode(String.join(",", entity.getCityCode()));
+            }
+            if (entity.getIndustry() != null) {
+                dto.setIndustry(String.join(",", entity.getIndustry()));
+            }
+            if (entity.getExperience() != null) {
+                dto.setExperience(String.join(",", entity.getExperience()));
+            }
+            if (entity.getDegree() != null) {
+                dto.setDegree(String.join(",", entity.getDegree()));
+            }
+            if (entity.getScale() != null) {
+                dto.setScale(String.join(",", entity.getScale()));
+            }
+            if (entity.getStage() != null) {
+                dto.setStage(String.join(",", entity.getStage()));
+            }
+            if (entity.getDeadStatus() != null) {
+                dto.setDeadStatus(entity.getDeadStatus());
+            }
+
+            // 期望薪资处理
+            if (entity.getExpectedSalary() != null && entity.getExpectedSalary().size() >= 2) {
+                dto.setMinSalary(entity.getExpectedSalary().get(0));
+                dto.setMaxSalary(entity.getExpectedSalary().get(1));
+            }
+
+            // 其他字段
+            dto.setCustomCityCode(entity.getCustomCityCode());
+            dto.setJobType(entity.getJobType());
+            dto.setSalary(entity.getSalary());
+            dto.setExpectedPosition(entity.getExpectedPosition());
+
+            return dto;
+        } catch (Exception e) {
+            log.error("ConfigEntity转换为ConfigDTO失败", e);
+            // 如果转换失败，返回ConfigDTO的单例实例作为备用
+            return ConfigDTO.getInstance();
+        }
+    }
+
+    /**
      * 按城市采集岗位
      */
-    private List<JobDTO> collectJobsByCity(String cityCode, String keyword, BossConfigDTO config) {
+    private void collectJobsByCity(String cityCode, String keyword, ConfigDTO config) {
         String searchUrl = getSearchUrl(cityCode, config);
         String encodedKeyword = URLEncoder.encode(keyword, StandardCharsets.UTF_8);
         String url = searchUrl + "&query=" + encodedKeyword;
@@ -281,8 +398,6 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
         }
         page.navigate(url);
 
-        List<JobDTO> jobDTOS = new ArrayList<>();
-
         if (isJobsPresent()) {
             try {
                 // 滚动加载更多岗位
@@ -293,22 +408,32 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
             }
         }
 
+        // 点击所有岗位卡片以触发详情API调用，让监控服务获取更多岗位信息
         BossElementLocators.clickAllJobCards(page, 5000);
 
-        return jobDTOS;
+        log.info("城市: {}，关键词: {} 的岗位采集操作完成，实际数据由监控服务自动入库", cityCode, keyword);
     }
 
     /**
      * 构建搜索URL
      */
-    private String getSearchUrl(String cityCode, BossConfigDTO config) {
-        return GEEK_JOB_URL + JobUtils.appendParam("city", cityCode) +
-                JobUtils.appendParam("jobType", config.getJobTypeCode()) +
-                JobUtils.appendParam("salary", config.getSalaryCode()) +
+    private String getSearchUrl(String cityCode, ConfigDTO config) {
+        return GEEK_JOB_URL +
+                // 城市参数：指定搜索的城市代码
+                JobUtils.appendParam("city", cityCode) +
+                // 职位类型参数：指定搜索的职位类型代码（如：全职、兼职、实习等）
+                JobUtils.appendParam("jobType", config.getJobType()) +
+                // 薪资参数：指定期望薪资范围代码
+                JobUtils.appendParam("salary", config.getSalary()) +
+                // 工作经验参数：指定工作经验要求代码列表（如：1-3年、3-5年等）
                 JobUtils.appendListParam("experience", config.getExperienceCodes()) +
+                // 学历要求参数：指定学历要求代码列表（如：本科、硕士、博士等）
                 JobUtils.appendListParam("degree", config.getDegreeCodes()) +
+                // 公司规模参数：指定公司规模代码列表（如：20-99人、100-499人等）
                 JobUtils.appendListParam("scale", config.getScaleCodes()) +
+                // 行业参数：指定行业类型代码列表（如：互联网、金融、教育等）
                 JobUtils.appendListParam("industry", config.getIndustryCodes()) +
+                // 融资阶段参数：指定公司融资阶段代码列表（如：天使轮、A轮、B轮等）
                 JobUtils.appendListParam("stage", config.getStageCodes());
     }
 
@@ -364,7 +489,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
      * 投递单个岗位
      */
     @SneakyThrows
-    private boolean deliverSingleJob(JobDTO jobDTO, BossConfigDTO config) {
+    private boolean deliverSingleJob(JobDTO jobDTO, ConfigDTO config) {
         // 在新标签页中打开岗位详情
         Page jobPage = PlaywrightUtil.getPageObject().context().newPage();
 
@@ -394,7 +519,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     /**
      * 执行具体的投递操作
      */
-    private boolean performDelivery(Page jobPage, JobDTO jobDTO, BossConfigDTO config) {
+    private boolean performDelivery(Page jobPage, JobDTO jobDTO, ConfigDTO config) {
         try {
             Locator chatBtn = jobPage.locator(CHAT_BUTTON).nth(0);
 
@@ -449,7 +574,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     /**
      * 处理聊天输入框
      */
-    private boolean handleChatInput(Page jobPage, JobDTO jobDTO, BossConfigDTO config) {
+    private boolean handleChatInput(Page jobPage, JobDTO jobDTO, ConfigDTO config) {
         try {
             Locator input = jobPage.locator(CHAT_INPUT).nth(0);
 
@@ -493,7 +618,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
     /**
      * 发送简历图片
      */
-    private boolean sendResumeImage(Page jobPage, BossConfigDTO config) {
+    private boolean sendResumeImage(Page jobPage, ConfigDTO config) {
         try {
             String resumePath = config.getResumeImagePath();
             if (resumePath != null && !resumePath.isEmpty()) {
@@ -501,7 +626,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
                 if (imageFile.exists() && imageFile.isFile()) {
                     Locator fileInput = jobPage.locator(IMAGE_UPLOAD);
                     if (fileInput.isVisible()) {
-                        fileInput.setInputFiles(new Path[] { Paths.get(imageFile.getPath()) });
+                        fileInput.setInputFiles(new Path[]{Paths.get(imageFile.getPath())});
                         Locator imageSendBtn = jobPage.locator(".image-uploader-btn");
                         if (imageSendBtn.isVisible(new Locator.IsVisibleOptions().setTimeout(2000.0))) {
                             imageSendBtn.click();
@@ -643,14 +768,14 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
                         boolean nomatch = message.contains("不是") || message.contains("不生");
                         if (match && !nomatch) {
                             // TODO 数据库中查询获取
-//                            if (!blackCompanies.stream().anyMatch(companyName::contains)) {
-//                                companyName = companyName.replaceAll("\\.{3}", "");
-//                                if (companyName.matches(".*(\\p{IsHan}{2,}|[a-zA-Z]{4,}).*")) {
-//                                    blackCompanies.add(companyName);
-//                                    newBlackCompanies++;
-//                                    log.debug("新增黑名单公司：{} - 拒绝信息：{}", companyName, message);
-//                                }
-//                            }
+                            // if (!blackCompanies.stream().anyMatch(companyName::contains)) {
+                            // companyName = companyName.replaceAll("\\.{3}", "");
+                            // if (companyName.matches(".*(\\p{IsHan}{2,}|[a-zA-Z]{4,}).*")) {
+                            // blackCompanies.add(companyName);
+                            // newBlackCompanies++;
+                            // log.debug("新增黑名单公司：{} - 拒绝信息：{}", companyName, message);
+                            // }
+                            // }
                         }
                     }
                 } catch (Exception e) {
@@ -757,45 +882,18 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
         } catch (Exception ignored) {
         }
 
-        log.info("等待扫码登录");
-
-        // Locator scanButton = page.locator(LOGIN_SCAN_SWITCH);
-        // boolean scanButtonVisible = scanButton.isVisible(new
-        // Locator.IsVisibleOptions().setTimeout(30000.0));
-        // if (!scanButtonVisible) {
-        // log.warn("扫码登录：未找到二维码登录按钮");
-        // return false;
-        // }
-
         boolean login = false;
-        long startTime = System.currentTimeMillis();
-        final long TIMEOUT = 10 * 60 * 1000; // 10分钟
 
-        Scanner scanner = new Scanner(System.in);
-
-        boolean loginSuccess = page.locator(LOGIN_SUCCESS_HEADER)
-                .isVisible(new Locator.IsVisibleOptions().setTimeout(2000.0));
+        boolean loginSuccess;
 
         while (!login) {
-            long elapsed = System.currentTimeMillis() - startTime;
-            if (elapsed >= TIMEOUT) {
-                log.warn("扫码登录：超过10分钟未完成登录，程序退出");
-                System.exit(1);
-            }
-
             try {
-                // scanButton.click();
                 loginSuccess = page.locator(LOGIN_SUCCESS_HEADER)
                         .isVisible(new Locator.IsVisibleOptions().setTimeout(2000.0));
 
                 if (loginSuccess) {
                     login = true;
                     log.info("登录成功，保存Cookie");
-                } else {
-                    boolean userInput = waitForUserInputOrTimeout(scanner);
-                    if (userInput) {
-                        log.debug("检测到用户输入，继续尝试登录");
-                    }
                 }
             } catch (Exception e) {
                 loginSuccess = page.locator(LOGIN_SUCCESS_HEADER)
@@ -835,7 +933,8 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
      */
     private String getCookieFromConfig() {
         try {
-            ConfigEntity config = configService.load();
+            ConfigEntity config = configService
+                    .loadByPlatformType(RecruitmentPlatformEnum.BOSS_ZHIPIN.getPlatformCode());
             return config != null ? config.getCookieData() : null;
         } catch (Exception e) {
             log.error("从配置中获取Cookie失败", e);
@@ -848,7 +947,8 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
      */
     private void saveCookieToConfig() {
         try {
-            ConfigEntity config = configService.load();
+            ConfigEntity config = configService
+                    .loadByPlatformType(RecruitmentPlatformEnum.BOSS_ZHIPIN.getPlatformCode());
             if (config == null) {
                 config = new ConfigEntity();
             }
@@ -857,6 +957,7 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
             String cookieJson = getCurrentCookiesAsJson();
             config.setCookieData(cookieJson);
 
+            config.setPlatformType(RecruitmentPlatformEnum.BOSS_ZHIPIN.getPlatformCode());
             configService.save(config);
             log.info("Cookie已保存到配置实体");
         } catch (Exception e) {
@@ -939,3 +1040,4 @@ public class BossRecruitmentServiceImpl implements RecruitmentService {
         }
     }
 }
+

@@ -1,6 +1,6 @@
 package getjobs.controller;
 
-import getjobs.modules.boss.dto.BossConfigDTO;
+import getjobs.common.dto.ConfigDTO;
 import getjobs.modules.boss.service.BossTaskService;
 import getjobs.modules.boss.service.BossTaskService.*;
 import lombok.extern.slf4j.Slf4j;
@@ -23,8 +23,11 @@ import java.util.Map;
 @RequestMapping("/api/boss/task")
 public class BossTaskController {
 
-    @Autowired
-    private BossTaskService bossTaskService;
+    private final BossTaskService bossTaskService;
+
+    public BossTaskController(BossTaskService bossTaskService) {
+        this.bossTaskService = bossTaskService;
+    }
 
     /**
      * 1. 登录接口
@@ -34,7 +37,7 @@ public class BossTaskController {
      * @return 登录结果
      */
     @PostMapping("/login")
-    public ResponseEntity<Map<String, Object>> login(@RequestBody BossConfigDTO config) {
+    public ResponseEntity<Map<String, Object>> login(@RequestBody ConfigDTO config) {
         log.info("接收到Boss登录请求");
 
         try {
@@ -71,7 +74,7 @@ public class BossTaskController {
      * @return 采集结果
      */
     @PostMapping("/collect")
-    public ResponseEntity<Map<String, Object>> collectJobs(@RequestBody BossConfigDTO config) {
+    public ResponseEntity<Map<String, Object>> collectJobs(@RequestBody ConfigDTO config) {
         log.info("接收到Boss岗位采集请求");
 
         try {
@@ -244,7 +247,7 @@ public class BossTaskController {
     // 请求DTO类
     public static class FilterRequest {
         private String collectTaskId;
-        private BossConfigDTO config;
+        private ConfigDTO config;
 
         public String getCollectTaskId() {
             return collectTaskId;
@@ -254,24 +257,24 @@ public class BossTaskController {
             this.collectTaskId = collectTaskId;
         }
 
-        public BossConfigDTO getConfig() {
+        public ConfigDTO getConfig() {
             return config;
         }
 
-        public void setConfig(BossConfigDTO config) {
+        public void setConfig(ConfigDTO config) {
             this.config = config;
         }
     }
 
     public static class DeliveryRequest {
-        private BossConfigDTO config;
+        private ConfigDTO config;
         private boolean enableActualDelivery = false; // 默认为模拟投递
 
-        public BossConfigDTO getConfig() {
+        public ConfigDTO getConfig() {
             return config;
         }
 
-        public void setConfig(BossConfigDTO config) {
+        public void setConfig(ConfigDTO config) {
             this.config = config;
         }
 

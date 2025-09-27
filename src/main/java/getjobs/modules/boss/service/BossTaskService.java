@@ -1,9 +1,9 @@
 package getjobs.modules.boss.service;
 
-import getjobs.modules.boss.dto.BossConfigDTO;
-import getjobs.enums.RecruitmentPlatformEnum;
+import getjobs.common.dto.ConfigDTO;
+import getjobs.common.enums.RecruitmentPlatformEnum;
 import getjobs.modules.boss.dto.JobDTO;
-import getjobs.modules.boss.enums.JobStatusEnum;
+import getjobs.common.enums.JobStatusEnum;
 import getjobs.repository.entity.JobEntity;
 import getjobs.repository.JobRepository;
 import getjobs.service.JobService;
@@ -18,7 +18,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
 /**
@@ -47,7 +46,8 @@ public class BossTaskService {
     private final ConcurrentHashMap<String, TaskStatus> taskStatusMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Date> taskStartTimeMap = new ConcurrentHashMap<>();
 
-    public BossTaskService(PlaywrightManager playwrightManager, RecruitmentServiceFactory serviceFactory, JobService jobService, JobRepository jobRepository, JobFilterService jobFilterService) {
+    public BossTaskService(PlaywrightManager playwrightManager, RecruitmentServiceFactory serviceFactory,
+            JobService jobService, JobRepository jobRepository, JobFilterService jobFilterService) {
         this.playwrightManager = playwrightManager;
         this.serviceFactory = serviceFactory;
         this.jobService = jobService;
@@ -69,7 +69,7 @@ public class BossTaskService {
      * @param config 配置信息
      * @return 登录结果
      */
-    public LoginResult login(BossConfigDTO config) {
+    public LoginResult login(ConfigDTO config) {
         String taskId = generateTaskId("login");
         taskStatusMap.put(taskId, TaskStatus.RUNNING);
         taskStartTimeMap.put(taskId, new Date());
@@ -116,7 +116,7 @@ public class BossTaskService {
      * @param config 配置信息
      * @return 采集结果
      */
-    public CollectResult collectJobs(BossConfigDTO config) {
+    public CollectResult collectJobs(ConfigDTO config) {
         String taskId = generateTaskId("collect");
         taskStatusMap.put(taskId, TaskStatus.RUNNING);
         taskStartTimeMap.put(taskId, new Date());
@@ -187,7 +187,7 @@ public class BossTaskService {
      * @param config 配置信息
      * @return 过滤结果
      */
-    public FilterResult filterJobs(BossConfigDTO config) {
+    public FilterResult filterJobs(ConfigDTO config) {
         try {
             log.info("开始执行岗位过滤操作");
 
@@ -199,7 +199,6 @@ public class BossTaskService {
                 throw new IllegalArgumentException("数据库中未找到职位数据或职位数据为空");
             }
 
-
             // 执行过滤逻辑，获取过滤原因
             List<JobDTO> filteredJobDTOS = new ArrayList<>();
             List<String> filteredJobIds = new ArrayList<>();
@@ -210,7 +209,7 @@ public class BossTaskService {
                 JobDTO job = jobService.convertToDTO(entity);
                 jobDTOS.add(job);
             }
-            List<JobDTO> filterJobs   = bossService.filterJobs(jobDTOS, config);
+            List<JobDTO> filterJobs = bossService.filterJobs(jobDTOS, config);
             filterJobs.forEach(job -> {
                 String filterReason = job.getFilterReason();
                 if (filterReason == null) {
@@ -223,14 +222,13 @@ public class BossTaskService {
                 }
             });
 
-
             // 批量更新被过滤的职位状态
             if (!filteredJobIds.isEmpty()) {
                 // 按过滤原因分组更新
                 Map<String, List<String>> reasonGroups = new HashMap<>();
                 for (int i = 0; i < filteredJobIds.size(); i++) {
                     String reason = filterReasons.get(i);
-                    String  encryptJobId = filteredJobIds.get(i);
+                    String encryptJobId = filteredJobIds.get(i);
                     reasonGroups.computeIfAbsent(reason, k -> new ArrayList<>()).add(encryptJobId);
                 }
 
@@ -266,7 +264,6 @@ public class BossTaskService {
         }
     }
 
-
     /**
      * 4. 投递操作
      * 
@@ -274,19 +271,21 @@ public class BossTaskService {
      * @param enableActualDelivery 是否启用实际投递
      * @return 投递结果
      */
-    public DeliveryResult deliverJobs(BossConfigDTO config, boolean enableActualDelivery) {
+    public DeliveryResult deliverJobs(ConfigDTO config, boolean enableActualDelivery) {
         String taskId = generateTaskId("deliver");
         taskStatusMap.put(taskId, TaskStatus.RUNNING);
         taskStartTimeMap.put(taskId, new Date());
 
         try {
-            log.info("开始执行岗位投递操作，任务ID: {}, 实际投递: {}",
+            log.info("开始执行BOSS直聘岗位投递操作，任务ID: {}, 实际投递: {}",
                     taskId, enableActualDelivery);
 
-            // 从数据库获取未过滤的岗位记录（status != 3）
-            List<JobEntity> jobEntities = jobRepository.findByStatusNot(3);
+            // 从数据库获取待处理状态的BOSS直聘平台岗位记录
+            List<JobEntity> jobEntities = jobRepository.findByStatusAndPlatform(
+                    JobStatusEnum.PENDING.getCode(), 
+                    "BOSS直聘");
             if (jobEntities == null || jobEntities.isEmpty()) {
-                throw new IllegalArgumentException("未找到可投递的岗位记录，数据库中所有岗位都已被过滤");
+                throw new IllegalArgumentException("未找到可投递的BOSS直聘岗位记录，数据库中没有待处理状态的BOSS直聘岗位");
             }
 
             // 转换为JobDTO
@@ -329,11 +328,11 @@ public class BossTaskService {
 
             taskStatusMap.put(taskId, TaskStatus.COMPLETED);
 
-            log.info("岗位投递操作完成，任务ID: {}, 处理 {} 个岗位", taskId, deliveredCount);
+            log.info("BOSS直聘岗位投递操作完成，任务ID: {}, 处理 {} 个岗位", taskId, deliveredCount);
             return result;
 
         } catch (Exception e) {
-            log.error("岗位投递操作执行失败，任务ID: {}", taskId, e);
+            log.error("BOSS直聘岗位投递操作执行失败，任务ID: {}", taskId, e);
             taskStatusMap.put(taskId, TaskStatus.FAILED);
 
             DeliveryResult result = new DeliveryResult();
@@ -356,7 +355,6 @@ public class BossTaskService {
     public TaskStatus getTaskStatus(String taskId) {
         return taskStatusMap.get(taskId);
     }
-
 
     /**
      * 清理任务数据

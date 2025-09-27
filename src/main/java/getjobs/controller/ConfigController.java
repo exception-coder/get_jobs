@@ -1,6 +1,7 @@
 package getjobs.controller;
 
-import getjobs.modules.boss.dto.BossConfigDTO;
+import getjobs.common.dto.ConfigDTO;
+import getjobs.common.enums.RecruitmentPlatformEnum;
 import getjobs.repository.entity.ConfigEntity;
 import getjobs.service.ConfigService;
 import org.springframework.http.ResponseEntity;
@@ -21,24 +22,70 @@ public class ConfigController {
     }
 
     @PostMapping("/boss")
-    public ResponseEntity<Map<String, Object>> saveBossConfig(@RequestBody BossConfigDTO dto) {
+    public ResponseEntity<Map<String, Object>> saveBossConfig(@RequestBody ConfigDTO dto) {
         ConfigEntity entity = toEntity(dto);
+        // 自动绑定平台类型为boss
+        entity.setPlatformType(RecruitmentPlatformEnum.BOSS_ZHIPIN.getPlatformCode());
         entity = configService.save(entity);
-        BossConfigDTO.reload();
+        ConfigDTO.reload();
 
         Map<String, Object> resp = new HashMap<>();
         resp.put("success", true);
         resp.put("id", entity.getId());
+        resp.put("platformType", entity.getPlatformType());
         return ResponseEntity.ok(resp);
     }
 
     @GetMapping("/boss")
     public ResponseEntity<ConfigEntity> loadBossConfig() {
-        ConfigEntity entity = configService.load();
+        ConfigEntity entity = configService.loadByPlatformType(RecruitmentPlatformEnum.BOSS_ZHIPIN.getPlatformCode());
         return ResponseEntity.ok(entity);
     }
 
-    private ConfigEntity toEntity(BossConfigDTO dto) {
+    @PostMapping("/job51")
+    public ResponseEntity<Map<String, Object>> save51JobConfig(@RequestBody ConfigDTO dto) {
+        ConfigEntity entity = toEntity(dto);
+        // 自动绑定平台类型为51job
+        entity.setPlatformType(RecruitmentPlatformEnum.JOB_51.getPlatformCode());
+        entity = configService.save(entity);
+        ConfigDTO.reload();
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("success", true);
+        resp.put("id", entity.getId());
+        resp.put("platformType", entity.getPlatformType());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/job51")
+    public ResponseEntity<ConfigEntity> load51JobConfig() {
+        ConfigEntity entity = configService.loadByPlatformType(RecruitmentPlatformEnum.JOB_51.getPlatformCode());
+        return ResponseEntity.ok(entity);
+    }
+
+    @PostMapping("/zhilian")
+    public ResponseEntity<Map<String, Object>> saveZhilianConfig(@RequestBody ConfigDTO dto) {
+        ConfigEntity entity = toEntity(dto);
+        // 自动绑定平台类型为智联招聘
+        entity.setPlatformType(RecruitmentPlatformEnum.ZHILIAN_ZHAOPIN.getPlatformCode());
+        entity = configService.save(entity);
+        ConfigDTO.reload();
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("success", true);
+        resp.put("id", entity.getId());
+        resp.put("platformType", entity.getPlatformType());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/zhilian")
+    public ResponseEntity<ConfigEntity> loadZhilianConfig() {
+        ConfigEntity entity = configService
+                .loadByPlatformType(RecruitmentPlatformEnum.ZHILIAN_ZHAOPIN.getPlatformCode());
+        return ResponseEntity.ok(entity);
+    }
+
+    private ConfigEntity toEntity(ConfigDTO dto) {
         ConfigEntity e = new ConfigEntity();
         e.setSayHi(dto.getSayHi());
         e.setKeywords(split(dto.getKeywords()));
